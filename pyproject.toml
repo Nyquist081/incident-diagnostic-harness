@@ -1,0 +1,12 @@
+[project]
+name = "incident-harness"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-openai>=1.2.2",
+    "langgraph>=1.2.1",
+    "pydantic>=2.13.4",
+    "rich>=15.0.0",
+]
