@@ -12,3 +12,4 @@ wheels/
 # Local secrets and caches
 .env
 .ast_cache/
+.DS_Store

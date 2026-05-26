@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agents.graph_builder import build_graph  # noqa: E402
+from core.config import load_model_settings  # noqa: E402
 from core.contracts import AgentHandoffCommand  # noqa: E402
 
 
@@ -20,9 +22,14 @@ def _initial_state() -> dict:
         "current_phase": "received",
         "impact_summary": "",
         "memory_summary": "",
+        "fix_plan": "",
+        "fix_execution_result": "",
+        "enable_fix_execution": False,
+        "operator_feedback": "",
         "final_report": "",
         "handoff_trace": [],
         "routing_errors": [],
+        "report_errors": [],
     }
 
 
@@ -56,6 +63,54 @@ class ControlPlaneTest(unittest.TestCase):
         graph_builder = ROOT / "src" / "agents" / "graph_builder.py"
 
         self.assertNotIn("add_conditional_edges", graph_builder.read_text())
+
+    def test_topology_and_memory_are_real_mock_retrievals(self) -> None:
+        final_state = build_graph().invoke(_initial_state())
+
+        self.assertIn("服务 user-center", final_state["impact_summary"])
+        self.assertIn("INC-2026", final_state["memory_summary"])
+
+    def test_fix_execution_path_is_optional(self) -> None:
+        state = _initial_state()
+        state["enable_fix_execution"] = True
+
+        final_state = build_graph().invoke(state)
+
+        self.assertEqual(
+            [item["to"] for item in final_state["handoff_trace"]],
+            ["Topology_Node", "Memory_Node", "Execute_Fix_Node"],
+        )
+        self.assertTrue(final_state["fix_execution_result"])
+
+    def test_model_settings_load_from_dotenv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dotenv = Path(tmpdir) / ".env"
+            dotenv.write_text(
+                "\n".join(
+                    [
+                        "OPENAI_API_KEY=test-key",
+                        "INCIDENT_SUPERVISOR_MODEL=test-supervisor",
+                        "INCIDENT_FALLBACK_MODEL=test-fallback",
+                        "INCIDENT_EMBEDDING_PROVIDER=fastembed",
+                        "INCIDENT_RAG_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5",
+                        "INCIDENT_MEMORY_PROVIDER=bm25",
+                        "INCIDENT_ENABLE_LLM_ROUTING=true",
+                        "INCIDENT_ENABLE_LLM_REPORT=true",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            settings = load_model_settings(dotenv_path=dotenv)
+
+        self.assertEqual(settings.supervisor_model, "test-supervisor")
+        self.assertEqual(settings.fallback_model, "test-fallback")
+        self.assertEqual(settings.embedding_provider, "fastembed")
+        self.assertEqual(settings.rag_embedding_model, "BAAI/bge-small-zh-v1.5")
+        self.assertEqual(settings.memory_provider, "bm25")
+        self.assertTrue(settings.enable_llm_routing)
+        self.assertTrue(settings.enable_llm_report)
+        self.assertTrue(settings.has_openai_credentials)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,74 @@
+{
+  "services": [
+    {
+      "name": "api-gateway",
+      "aliases": ["gateway", "网关", "入口网关"],
+      "upstream": ["web-console", "mobile-app"],
+      "downstream": ["user-center", "order-service"],
+      "owner": "platform-team"
+    },
+    {
+      "name": "user-center",
+      "aliases": ["用户中心", "user service", "user-center"],
+      "upstream": ["api-gateway", "web-console"],
+      "downstream": ["auth-service", "redis-session", "mysql-user"],
+      "owner": "identity-team"
+    },
+    {
+      "name": "auth-service",
+      "aliases": ["鉴权中心", "auth", "鉴权服务"],
+      "upstream": ["user-center", "api-gateway"],
+      "downstream": ["redis-session", "kms-service"],
+      "owner": "identity-team"
+    },
+    {
+      "name": "redis-session",
+      "aliases": ["redis", "session cache", "会话缓存"],
+      "upstream": ["user-center", "auth-service"],
+      "downstream": [],
+      "owner": "infra-team"
+    },
+    {
+      "name": "mysql-user",
+      "aliases": ["用户库", "mysql", "user db"],
+      "upstream": ["user-center"],
+      "downstream": [],
+      "owner": "dba-team"
+    },
+    {
+      "name": "kms-service",
+      "aliases": ["kms", "密钥服务"],
+      "upstream": ["auth-service"],
+      "downstream": [],
+      "owner": "security-team"
+    },
+    {
+      "name": "order-service",
+      "aliases": ["订单服务", "order"],
+      "upstream": ["api-gateway"],
+      "downstream": ["payment-service", "inventory-service"],
+      "owner": "commerce-team"
+    },
+    {
+      "name": "payment-service",
+      "aliases": ["支付服务", "payment"],
+      "upstream": ["order-service"],
+      "downstream": ["risk-service"],
+      "owner": "payment-team"
+    },
+    {
+      "name": "inventory-service",
+      "aliases": ["库存服务", "inventory"],
+      "upstream": ["order-service"],
+      "downstream": [],
+      "owner": "commerce-team"
+    },
+    {
+      "name": "risk-service",
+      "aliases": ["风控服务", "risk"],
+      "upstream": ["payment-service"],
+      "downstream": [],
+      "owner": "risk-team"
+    }
+  ]
+}

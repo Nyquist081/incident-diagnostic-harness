@@ -2,302 +2,372 @@
 
 ## 1. 设计目标
 
-本项目是一个纯后端 CLI 控制面，用于诊断微服务级联故障。Sprint 1 不连接真实数据库，也不引入真实检索系统，重点验证以下能力：
+本项目是一个纯后端 CLI 故障诊断基座，用于验证微服务级联故障诊断的控制面、数据面、上下文策略、工具层和评测层。当前实现覆盖 Sprint 1 到 Sprint 3 的可运行骨架：
 
-- 通过终端接收自然语言故障描述；
-- 使用 LangGraph 驱动状态机流转；
-- 使用 Pydantic v2 强约束 Supervisor 的路由决策；
-- 将高价值诊断证据从普通消息流中隔离出来；
-- 生成可测试、可复盘、可横向对比的最终诊断报告。
+- Sprint 1：LangGraph 控制面、Pydantic 路由契约、Rich CLI；
+- Sprint 2：Mock 拓扑图谱、历史工单语料、本地 BM25 检索；
+- Sprint 3：Human-in-the-loop 模拟修复确认、Benchmark 批量评测。
 
-该智能体不是单体 ReAct 循环，而是分层多智能体架构。Supervisor 负责规划与路由，Worker 节点负责特定领域的证据采集。
+该系统不是单体 ReAct 循环，而是一个可替换组件的 harness。Supervisor 只负责路由，Worker 节点只负责调用工具并写入状态，工具只负责检索，上下文策略只负责压缩证据，CLI 只负责展示与人工输入。
 
-## 2. 架构原则
+## 2. 分层架构
 
-### 2.1 CLI 优先
+| 层 | 目录 | 责任 | 可替换方向 |
+| --- | --- | --- | --- |
+| 控制面 | `src/agents/` | LangGraph 节点、Supervisor 路由、执行节点、中断点 | 替换 Supervisor 策略、增加新 Worker |
+| 状态与契约 | `src/core/` | `EngineState`、Pydantic 契约、消息和路径工具 | 增加状态字段、收紧契约 |
+| 上下文策略 | `src/context/` | 将原始工具结果压缩为状态摘要 | Prompt 压缩、证据排序、窗口裁剪 |
+| 工具层 | `src/tools/` | JSON 读取、拓扑查询、记忆检索、文本匹配 | Neo4j、CMDB、Zep、向量库 |
+| 数据平面 | `data/mock/` | 本地 Mock 拓扑和 50 条历史工单 | 真实数据库或工单系统 |
+| 交互层 | `src/cli/` | Rich CLI、流式状态展示、人工确认 | API、批处理、服务化 |
+| 评测层 | `scripts/` | Benchmark、耗时和 Token 估算 | 真实 Token 统计、质量打分 |
 
-系统只提供终端交互入口，通过 `rich` 渲染执行过程和最终报告。不引入 Web 前端、浏览器状态或前端框架。
+核心原则：每层只依赖下层或稳定契约，不跨层读取内部细节。
 
-### 2.2 契约优先
+## 2.1 模型配置面
 
-Supervisor 必须生成 `AgentHandoffCommand`。图不会根据非结构化文本直接路由。如果启用大模型，必须通过 `ChatOpenAI.with_structured_output(AgentHandoffCommand)` 绑定结构化输出。
+模型不写死在节点里，而是通过 `.env` 进行角色化配置。提交到仓库的是 `.env.example`，真实 `.env` 被 `.gitignore` 忽略。
 
-### 2.3 State 是集成边界
+当前支持的模型角色：
 
-所有节点只通过 `EngineState` 通信。Worker 节点之间不能直接互调。CLI 不读取 Worker 的内部实现细节，只消费状态变化和消息流。
+| 环境变量 | 作用 |
+| --- | --- |
+| `OPENAI_API_KEY` | DeepSeek API Key。变量名沿用 OpenAI SDK 兼容格式。 |
+| `OPENAI_BASE_URL` | DeepSeek OpenAI-compatible endpoint，默认 `https://api.deepseek.com`。 |
+| `INCIDENT_PRIMARY_MODEL` | 主推理模型，默认 `deepseek-v4-pro`。 |
+| `INCIDENT_SUPERVISOR_MODEL` | Supervisor 结构化路由模型，默认 `deepseek-v4-flash`。 |
+| `INCIDENT_FALLBACK_MODEL` | LLM 路由失败时的降级模型，默认 `deepseek-v4-flash`。 |
+| `INCIDENT_REPORT_MODEL` | 未来 LLM 报告生成模型，默认 `deepseek-v4-pro`。 |
+| `INCIDENT_EMBEDDING_PROVIDER` | Embedding provider，默认 `fastembed`，用于本地免费向量检索。 |
+| `INCIDENT_RAG_EMBEDDING_MODEL` | 本地 embedding 模型，默认 `BAAI/bge-small-zh-v1.5`。 |
+| `INCIDENT_MEMORY_PROVIDER` | 记忆检索 provider，默认 `bm25`，可切换为 `fastembed`。 |
+| `INCIDENT_DEEPSEEK_THINKING` | DeepSeek thinking mode 开关，默认 `disabled`，更适合结构化路由。 |
+| `INCIDENT_ENABLE_LLM_ROUTING` | 是否启用 LLM Supervisor 路由。默认 `false`，保持离线可运行。 |
+| `INCIDENT_ENABLE_LLM_REPORT` | 是否启用 LLM 结构化报告生成。默认 `false`，保持离线可运行。 |
+| `INCIDENT_LLM_TEMPERATURE` | LLM 温度。结构化路由建议保持 `0`。 |
 
-### 2.4 展示与执行解耦
+Supervisor 的路由顺序：
 
-Graph 节点不直接打印终端输出。节点只返回状态更新，CLI 负责所有展示逻辑。这样核心图可以被测试、API 服务或 Benchmark 脚本复用。
+```text
+INCIDENT_SUPERVISOR_MODEL
+  -> INCIDENT_FALLBACK_MODEL
+  -> 本地确定性路由
+```
 
-### 2.5 确定性降级
+这样做的目的：
 
-Sprint 1 必须能在没有 OpenAI API Key 的情况下运行。如果没有 `OPENAI_API_KEY`，或者 LLM 路由失败，Supervisor 会降级到本地确定性路由器，用于离线验证控制面。
+- 模型替换不需要改 LangGraph 节点；
+- 主模型、降级模型、RAG 模型可以独立调优；
+- 可以接 OpenAI-compatible 网关；
+- `.env.example` 可提交，真实密钥不会进入 Git。
 
-## 3. 运行时组件
+## 3. 状态契约
 
-### 3.1 `EngineState`
-
-定义位置：`src/core/state.py`
+`EngineState` 定义在 `src/core/state.py`。
 
 | 字段 | 类型 | 写入方 | 用途 |
 | --- | --- | --- | --- |
-| `messages` | `Annotated[list[BaseMessage], operator.add]` | 所有节点 | 追加式消息流，用于保留用户输入、Supervisor 决策和 Worker 观测。 |
-| `current_phase` | `str` | 当前节点 | 当前诊断阶段，供 CLI、测试和 Benchmark 读取。 |
-| `impact_summary` | `str` | `Topology_Node` | 拓扑影响面摘要，与普通消息流隔离，避免污染 Prompt 和报告上下文。 |
-| `memory_summary` | `str` | `Memory_Node` | 历史故障记忆摘要，是 Sprint 2 检索结果的占位字段。 |
-| `final_report` | `str` | `FINISH` | CLI 最终展示的诊断报告。 |
-| `handoff_trace` | `Annotated[list[dict[str, str]], operator.add]` | `Supervisor` | 路由审计轨迹，方便调试、复盘和横向评测。 |
-| `routing_errors` | `Annotated[list[str], operator.add]` | `Supervisor` | 记录 LLM 或契约失败后触发降级的原因。 |
+| `messages` | `Annotated[list[BaseMessage], operator.add]` | 所有节点 | 追加式消息流，记录用户输入、路由决策和节点观测。 |
+| `current_phase` | `str` | 当前节点 | 当前执行阶段，供 CLI 和 Benchmark 展示。 |
+| `impact_summary` | `str` | `Topology_Node` | 拓扑影响面摘要，避免将图谱原始数据塞进消息流。 |
+| `memory_summary` | `str` | `Memory_Node` | 历史相似故障摘要，由检索结果压缩得到。 |
+| `fix_plan` | `str` | `Execute_Fix_Node` | 模拟修复计划。 |
+| `fix_execution_result` | `str` | `Execute_Fix_Node` | 模拟修复执行结果。 |
+| `enable_fix_execution` | `bool` | CLI/Benchmark | 是否启用人类在环修复执行路径。 |
+| `operator_feedback` | `str` | CLI | 人类拒绝执行时的反馈。 |
+| `final_report` | `str` | `FINISH` | 最终诊断报告。 |
+| `handoff_trace` | `Annotated[list[dict[str, str]], operator.add]` | `Supervisor` | 路由审计轨迹，用于复盘和横向评测。 |
+| `routing_errors` | `Annotated[list[str], operator.add]` | `Supervisor` | LLM 或契约失败后的降级原因。 |
 
-设计说明：`impact_summary` 不放在 `messages` 里，是为了让关键证据以稳定、紧凑、可测试的方式传递。消息流适合追踪过程，状态字段适合承载结构化诊断上下文。
+设计上，`messages` 用于追踪过程，`impact_summary`、`memory_summary` 等状态字段用于承载稳定证据。后续调 Prompt 或报告模板时，可以只改上下文策略，不影响图结构。
 
-### 3.2 `AgentHandoffCommand`
+## 4. 路由契约
 
-定义位置：`src/core/contracts.py`
+`AgentHandoffCommand` 定义在 `src/core/contracts.py`。
 
 字段：
 
-- `reasoning`：必填，解释本次路由决策原因；
-- `next_worker`：必填，只允许 `Topology_Node`、`Memory_Node`、`FINISH`；
-- `instruction`：必填，传递给下游节点的任务说明。
+- `reasoning`：本次路由原因；
+- `next_worker`：只允许 `Topology_Node`、`Memory_Node`、`Execute_Fix_Node`、`FINISH`；
+- `instruction`：传给下游节点的任务说明。
 
-该模型启用 `extra="forbid"`，如果 LLM 输出未知字段，会直接校验失败，避免非预期字段悄悄进入控制面。
+契约启用 `extra="forbid"`，避免 LLM 输出额外字段进入控制面。Supervisor 的阶段守卫会进一步保证：即便结构合法，也不能在缺少拓扑或记忆证据时提前结束。
 
-### 3.3 `Supervisor`
-
-定义位置：`src/agents/graph_builder.py`
-
-职责：
-
-- 读取当前 `EngineState`；
-- 生成 `AgentHandoffCommand`；
-- 执行阶段守卫，避免证据不足时提前结束；
-- 写入 `handoff_trace`；
-- 返回 `Command(goto=...)` 完成动态路由。
-
-当前 Supervisor 支持两种路由模式：
-
-| 模式 | 触发条件 | 行为 |
-| --- | --- | --- |
-| LLM 结构化路由 | 存在 `OPENAI_API_KEY` | 使用 `ChatOpenAI.with_structured_output(AgentHandoffCommand)` 生成路由决策。 |
-| 本地确定性路由 | 无 API Key 或 LLM 异常 | 根据缺失字段按 `Topology_Node -> Memory_Node -> FINISH` 流转。 |
-
-阶段守卫和 Pydantic 校验是两个层次：Pydantic 判断“输出是否合法”，阶段守卫判断“在当前状态下这样走是否合理”。
-
-### 3.4 `Topology_Node`
-
-Sprint 1 行为：
-
-- 不读取真实图数据库；
-- 返回 Mock 拓扑影响面；
-- 只写入 `impact_summary` 和一条 `AIMessage`；
-- 通过 `Command(goto="Supervisor")` 回到 Supervisor。
-
-Sprint 2 替换点：
-
-- 将硬编码摘要替换为 `data/mock/topology.json` 读取逻辑；
-- 保持输出契约仍为 `impact_summary: str`；
-- 除非调试需要，不把原始图谱记录塞进 `messages`。
-
-### 3.5 `Memory_Node`
-
-Sprint 1 行为：
-
-- 不读取真实记忆库；
-- 返回 Mock 历史故障摘要；
-- 只写入 `memory_summary` 和一条 `AIMessage`；
-- 回到 Supervisor。
-
-Sprint 2 替换点：
-
-- 将硬编码摘要替换为基于 `data/mock/incidents.json` 的 BM25 或本地向量检索；
-- 保持输出契约仍为 `memory_summary: str`；
-- 只有当报告生成或 Benchmark 确实需要时，再增加更细的结构化证据字段。
-
-### 3.6 `FINISH`
-
-Sprint 1 的 `FINISH` 节点是确定性的。它组合以下内容：
-
-- 用户原始请求；
-- `impact_summary`；
-- `memory_summary`；
-- 固定诊断建议模板。
-
-最终写入 `final_report`，并追加一条 `AIMessage` 用于过程追踪。
-
-### 3.7 CLI
-
-定义位置：`src/cli/main.py`
-
-职责：
-
-- 解析命令行参数，或在无参数时交互式请求故障描述；
-- 初始化 `EngineState`；
-- 流式读取图执行状态；
-- 使用 `rich` 渲染当前阶段、Supervisor 决策、Mock Worker 进度、降级信息和最终报告。
-
-CLI 是薄展示层，不承担路由、检索或报告生成职责。
-
-## 4. 图结构
+## 5. 图结构
 
 ```mermaid
 flowchart TD
-    A["CLI: 用户故障描述"] --> B["Supervisor"]
-    B -->|"Command(goto='Topology_Node')"| C["Topology_Node"]
-    C -->|"Command(goto='Supervisor')"| B
-    B -->|"Command(goto='Memory_Node')"| D["Memory_Node"]
-    D -->|"Command(goto='Supervisor')"| B
-    B -->|"Command(goto='FINISH')"| E["FINISH"]
+    A["CLI / Benchmark 输入"] --> B["Supervisor"]
+    B -->|"Command: Topology_Node"| C["Topology_Node"]
+    C -->|"Command: Supervisor"| B
+    B -->|"Command: Memory_Node"| D["Memory_Node"]
+    D -->|"Command: Supervisor"| B
+    B -->|"Command: Execute_Fix_Node"| X["Execute_Fix_Node"]
+    X --> E["FINISH"]
+    B -->|"Command: FINISH"| E
     E --> F["END"]
 ```
 
 系统不使用 `add_conditional_edges`。所有动态路由都通过 `Command(goto=...)` 表达。
 
-## 5. Sprint 1 执行轨迹
+## 6. 组件职责
 
-标准执行路径：
+### 6.1 Supervisor
 
-1. CLI 创建初始状态，并写入一条 `HumanMessage`；
-2. Supervisor 发现缺少 `impact_summary`，路由到 `Topology_Node`；
-3. Topology 节点写入 Mock 拓扑影响面，并回到 Supervisor；
-4. Supervisor 发现缺少 `memory_summary`，路由到 `Memory_Node`；
-5. Memory 节点写入 Mock 历史故障摘要，并回到 Supervisor；
-6. Supervisor 发现必要证据已经齐备，路由到 `FINISH`；
-7. Finish 节点生成 `final_report`。
+职责：
 
-## 6. 横向对比与扩展点
+- 读取当前 `EngineState`；
+- 生成 `AgentHandoffCommand`；
+- 写入 `handoff_trace`；
+- 执行阶段守卫；
+- 返回 `Command(goto=...)`。
 
-### 6.1 Supervisor 策略对比
+当前支持两种路由模式：
 
-只要保持以下接口不变，就可以替换 Supervisor 策略：
+| 模式 | 触发条件 | 行为 |
+| --- | --- | --- |
+| LLM 结构化路由 | 存在 `OPENAI_API_KEY` | 使用 `ChatOpenAI.with_structured_output(AgentHandoffCommand)`。 |
+| 本地确定性路由 | 无 API Key 或 LLM 异常 | 按状态缺口路由：拓扑、记忆、修复执行或结束。 |
 
-```text
-EngineState -> AgentHandoffCommand -> Command
+### 6.2 Topology Node
+
+职责：
+
+- 根据用户输入调用 `TopologyTool`；
+- 从 `data/mock/topology.json` 匹配服务名或别名；
+- 通过 `DiagnosticContextStrategy` 生成 `impact_summary`；
+- 返回 Supervisor。
+
+替换方式：
+
+- 将 `TopologyTool` 替换为 Neo4j 查询器；
+- 或替换为服务目录、CMDB、Kubernetes 资源关系查询器；
+- 保持输出 `impact_summary: str` 不变。
+
+### 6.3 Memory Node
+
+职责：
+
+- 将用户请求和 `impact_summary` 合并成检索 query；
+- 调用 `MemoryTool`；
+- 对 `data/mock/incidents.json` 中 50 条历史工单做 BM25 检索；
+- 通过上下文策略生成 `memory_summary`；
+- 返回 Supervisor。
+
+替换方式：
+
+- 将 `SimpleBM25` 替换为向量索引；
+- 将 JSON 语料替换为 Zep、工单系统或日志平台；
+- 保持输出 `memory_summary: str` 不变。
+
+### 6.4 Execute Fix Node
+
+职责：
+
+- 生成模拟修复计划；
+- 写入模拟执行结果；
+- 不执行真实生产变更。
+
+启用 `--human-in-loop` 时，图会通过 `interrupt_before=["Execute_Fix_Node"]` 在执行前暂停。CLI 提示 `[y/N]`：
+
+- `y`：恢复图执行，进入模拟修复节点；
+- `n`：记录 `operator_feedback`，关闭执行路径，直接收敛报告。
+
+### 6.5 Finish Node
+
+职责：
+
+- 汇总用户请求、拓扑影响面、历史记忆、修复计划、执行结果和人工反馈；
+- 生成确定性 `final_report`；
+- 作为 CLI 和 Benchmark 的统一输出。
+
+## 7. 数据平面
+
+`data/mock/topology.json` 包含网关、用户中心、鉴权中心、Redis、用户库、KMS、订单、支付、库存、风控等服务，以及上下游依赖和 owner。
+
+`data/mock/incidents.json` 包含 50 条历史故障，每条包含：
+
+- `id`
+- `service`
+- `symptom`
+- `root_cause`
+- `resolution`
+- `tags`
+
+当前检索是本地离线 BM25，不依赖网络和外部数据库。
+
+## 8. 上下文策略
+
+`DiagnosticContextStrategy` 定义在 `src/context/strategy.py`。
+
+它负责把工具返回的结构化结果压缩成可进入状态机的文本摘要：
+
+- `summarize_topology()`：将拓扑命中结果压缩为服务、owner、上游、下游；
+- `build_memory_query()`：组合用户请求和拓扑摘要；
+- `summarize_memory()`：将相似工单列表压缩为报告可读摘要。
+
+后续可在这里调优：
+
+- top-k 证据数量；
+- 摘要长度；
+- 是否保留 score；
+- 是否按服务、时间、严重等级重排；
+- 是否生成面向 LLM 的 Prompt Context 或面向报告的 Evidence Context。
+
+## 9. Benchmark
+
+运行：
+
+```bash
+uv run python scripts/run_benchmark.py
 ```
 
-候选策略：
+输出字段：
 
-- 纯确定性有限状态路由；
+- Case 编号；
+- Query；
+- 路由路径；
+- 端到端耗时；
+- 离线 Token 估算；
+- fallback 次数。
+
+当前 Token 是离线估算，后续接入真实 LLM 后可替换为模型返回的 usage。
+
+## 10. 运行命令
+
+初始化本地模型配置：
+
+```bash
+cp .env.example .env
+```
+
+查看当前模型角色配置：
+
+```bash
+uv run python main.py --show-config "排查用户中心 Token Expired 报错"
+```
+
+普通诊断：
+
+```bash
+uv run python main.py "排查用户中心 Token Expired 报错"
+```
+
+人类在环模拟修复：
+
+```bash
+uv run python main.py --human-in-loop "排查用户中心 Token Expired 报错"
+```
+
+测试：
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+Benchmark：
+
+```bash
+uv run python scripts/run_benchmark.py
+```
+
+## 11. 横向对比维度
+
+### Supervisor 策略
+
+候选：
+
+- 纯确定性路由；
 - LLM 结构化路由；
-- 带重试和自修正的 LLM 路由；
+- LLM + 自修正重试；
 - 规则优先、LLM 兜底；
-- 成本感知路由，例如简单故障跳过记忆检索。
+- 成本感知路由。
 
-对比维度：
+指标：
 
 - 路由准确率；
-- 图执行步数；
-- 总耗时；
+- 图步数；
+- 延迟；
 - Token 消耗；
-- 失败率；
+- fallback 次数；
 - 最终报告质量；
-- `handoff_trace` 的可解释性。
+- `handoff_trace` 可解释性。
 
-### 6.2 Topology Provider 对比
+### Memory 策略
 
-保持节点输出稳定：
+候选：
 
-```text
-Topology provider -> impact_summary: str
-```
+- BM25；
+- 本地向量，推荐免费中文小模型 `BAAI/bge-small-zh-v1.5`；
+- 混合检索；
+- Zep 时序记忆；
+- 工单系统检索。
 
-候选实现：
+指标：
 
-- Sprint 1 硬编码 Mock；
-- JSON 文件读取；
-- Neo4j 查询适配器；
-- 服务目录适配器；
-- Kubernetes owner-reference 适配器。
+- Top-k 命中率；
+- 相似工单相关性；
+- 摘要长度；
+- 查询延迟；
+- 对最终根因判断的帮助度。
 
-### 6.3 Memory Provider 对比
+### Context 策略
 
-保持节点输出稳定：
+候选：
 
-```text
-Memory provider -> memory_summary: str
-```
+- 简短摘要；
+- 保留结构化证据；
+- 按服务链路排序；
+- 按历史相似度排序；
+- 为不同下游生成不同上下文。
 
-候选实现：
+指标：
 
-- Sprint 1 硬编码 Mock；
-- JSON + BM25；
-- 本地 Embedding 索引；
-- Zep 风格时序记忆；
-- 工单系统适配器。
+- Token 成本；
+- 报告可读性；
+- 证据完整性；
+- LLM 路由稳定性。
 
-### 6.4 Report Generator 对比
+### Tool Provider
 
-保持最终输出字段稳定：
+候选：
 
-```text
-EngineState -> final_report: str
-```
+- JSON Mock；
+- Neo4j；
+- CMDB；
+- Kubernetes；
+- 日志平台；
+- 工单系统。
 
-候选实现：
+指标：
 
-- 当前确定性模板；
-- 结构化 LLM 报告模型；
-- 按严重等级切换模板；
-- 面向复盘文档的 Markdown 生成器。
+- 数据新鲜度；
+- 查询延迟；
+- 失败率；
+- 接入成本；
+- 输出契约稳定性。
 
-## 7. 失败处理
+## 12. 当前状态
 
-当前 Sprint 1 行为：
+已完成：
 
-- LLM 失败时触发确定性降级；
-- 降级原因写入 `routing_errors`；
-- 阶段守卫阻止证据不足时提前 `FINISH`。
+- Sprint 1 控制面骨架；
+- Pydantic 路由契约；
+- LangGraph `Command` 动态路由；
+- Rich CLI；
+- Mock 拓扑图谱；
+- 50 条历史工单；
+- 本地 BM25 检索；
+- 上下文策略层；
+- Human-in-the-loop 模拟修复确认；
+- Benchmark 脚本；
+- 单元测试。
 
-Sprint 2 计划：
+仍待生产化：
 
-- 区分网络错误、Schema 校验错误和阶段非法错误；
-- 对 Schema 错误加入自修正重试 Prompt；
-- 在 Benchmark 中统计降级次数和失败类型。
-
-## 8. 测试策略
-
-当前已补充基础单测：
-
-- 图可以走到 `finished`；
-- `final_report` 非空；
-- `handoff_trace` 顺序为 `Topology_Node -> Memory_Node -> FINISH`；
-- 代码中不使用 `add_conditional_edges`；
-- `AgentHandoffCommand` 会拒绝未知字段。
-
-后续 Sprint 2 测试建议：
-
-- 拓扑 JSON fixture 查询；
-- 历史工单检索排序；
-- Supervisor 对非法路由输出的自修正；
-- Worker 异常时的错误状态写入。
-
-## 9. Benchmark 准备度
-
-当前设计已经为 Sprint 3 留出以下观测点：
-
-- `handoff_trace`：统计路由路径和图步数；
-- `routing_errors`：统计降级次数和失败类型；
-- `current_phase`：记录节点阶段；
-- `final_report`：做报告质量评估。
-
-后续 `scripts/run_benchmark.py` 可以直接复用 `build_graph()`，不需要依赖 CLI。
-
-## 10. 当前阶段状态
-
-Sprint 1 当前已完成：
-
-- `uv` 项目和目录结构已初始化；
-- State 使用 `BaseMessage`，并隔离 `impact_summary`；
-- Supervisor 使用 Pydantic 契约和 `Command`；
-- Dummy 节点验证了完整路由闭环；
-- CLI 可以流式展示执行过程和最终报告；
-- 无 API Key 时可以确定性离线运行；
-- 已有基础单测覆盖控制面主路径。
-
-仍属于 Sprint 2/3 的内容：
-
-- 尚未生成 `data/mock/topology.json` 和 `data/mock/incidents.json`；
-- 尚未实现 BM25 或向量检索；
-- 尚未实现 Human-in-the-loop 中断；
-- 尚未实现 Benchmark 管道和 Token 统计。
+- 接入真实图数据库或服务目录；
+- 接入真实工单、日志或时序记忆系统；
+- 将 Token 估算替换为真实模型 usage；
+- 增加节点级耗时和错误类型；
+- 将模拟修复节点替换为真实 runbook 或变更平台；
+- 增加更细的评测集和报告质量打分。

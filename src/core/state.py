@@ -15,6 +15,11 @@ class EngineState(TypedDict):
     current_phase: str
     impact_summary: str
     memory_summary: str
+    fix_plan: str
+    fix_execution_result: str
+    enable_fix_execution: bool
+    operator_feedback: str
     final_report: str
     handoff_trace: Annotated[list[dict[str, str]], operator.add]
     routing_errors: Annotated[list[str], operator.add]
+    report_errors: Annotated[list[str], operator.add]

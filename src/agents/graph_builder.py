@@ -2,35 +2,41 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessage
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command
 
+from context.strategy import DiagnosticContextStrategy
 from core.contracts import AgentHandoffCommand
+from core.messages import latest_user_request
+from core.model_factory import ModelFactory
+from core.paths import MOCK_DATA_DIR
 from core.state import EngineState
+from reporting.generator import LLMReportGenerator, render_report
+from tools.json_store import JsonStore
+from tools.memory import build_memory_provider
+from tools.topology import TopologyTool
 
 SUPERVISOR = "Supervisor"
 TOPOLOGY_NODE = "Topology_Node"
 MEMORY_NODE = "Memory_Node"
+EXECUTE_FIX_NODE = "Execute_Fix_Node"
 FINISH = "FINISH"
 
 
-def _latest_user_request(state: EngineState) -> str:
-    for message in reversed(state.get("messages", [])):
-        if isinstance(message, HumanMessage):
-            return _message_text(message)
-    return ""
-
-
-def _message_text(message: BaseMessage) -> str:
-    content = message.content
-    if isinstance(content, str):
-        return content
-    return str(content)
+STORE = JsonStore(MOCK_DATA_DIR)
+CONTEXT_STRATEGY = DiagnosticContextStrategy()
+TOPOLOGY_TOOL = TopologyTool(STORE.load("topology.json"))
+MODEL_FACTORY = ModelFactory()
+MEMORY_TOOL = build_memory_provider(
+    STORE.load("incidents.json"),
+    provider=MODEL_FACTORY.settings.memory_provider,
+    embedding_model=MODEL_FACTORY.settings.rag_embedding_model,
+)
+REPORT_GENERATOR = LLMReportGenerator(MODEL_FACTORY)
 
 
 def _fallback_handoff(state: EngineState) -> AgentHandoffCommand:
@@ -45,6 +51,12 @@ def _fallback_handoff(state: EngineState) -> AgentHandoffCommand:
             reasoning="已有拓扑信息，下一步需要比对历史工单和相似故障。",
             next_worker=MEMORY_NODE,
             instruction="检索历史工单摘要，提取相似告警、修复动作和根因线索。",
+        )
+    if state.get("enable_fix_execution") and not state.get("fix_execution_result"):
+        return AgentHandoffCommand(
+            reasoning="诊断证据已齐备，进入人工确认前的模拟修复执行阶段。",
+            next_worker=EXECUTE_FIX_NODE,
+            instruction="生成并等待执行模拟修复动作，执行前必须经过人类确认。",
         )
     return AgentHandoffCommand(
         reasoning="拓扑和历史记忆均已收集，可以收敛诊断报告。",
@@ -75,21 +87,33 @@ def _enforce_phase_guard(state: EngineState, handoff: AgentHandoffCommand) -> Ag
                 next_worker=MEMORY_NODE,
                 instruction="检索相似历史工单，提取复盘线索。",
             )
+    if state.get("enable_fix_execution") and state.get("memory_summary"):
+        if not state.get("fix_execution_result") and handoff.next_worker == FINISH:
+            return AgentHandoffCommand(
+                reasoning=(
+                    "已启用人类在环修复执行，但尚未产生执行结果；"
+                    "按阶段守卫改派 Execute_Fix_Node。"
+                ),
+                next_worker=EXECUTE_FIX_NODE,
+                instruction="准备模拟修复动作，等待人类确认后执行。",
+            )
     return handoff
 
 
-def _llm_handoff(state: EngineState) -> AgentHandoffCommand:
-    llm = ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-        temperature=0,
-    ).with_structured_output(AgentHandoffCommand)
-    user_request = _latest_user_request(state)
+def _invoke_structured_handoff(state: EngineState, model_name: str) -> AgentHandoffCommand:
+    llm = MODEL_FACTORY.chat(model_name).with_structured_output(
+        AgentHandoffCommand,
+        method="json_mode",
+    )
+    user_request = latest_user_request(state.get("messages", []))
     response = llm.invoke(
         [
             (
                 "system",
                 "你是微服务故障诊断控制面的 Supervisor。"
-                "你只能在 Topology_Node、Memory_Node、FINISH 中选择下一步。"
+                "你必须只输出 JSON，不要输出 Markdown。"
+                "JSON 字段必须是 reasoning、next_worker、instruction。"
+                "next_worker 只能在 Topology_Node、Memory_Node、Execute_Fix_Node、FINISH 中选择。"
                 "如果 impact_summary 和 memory_summary 都已经存在，应选择 FINISH。",
             ),
             (
@@ -106,14 +130,38 @@ def _llm_handoff(state: EngineState) -> AgentHandoffCommand:
     return response
 
 
+def _llm_handoff(state: EngineState) -> AgentHandoffCommand:
+    settings = MODEL_FACTORY.settings
+    return _invoke_structured_handoff(state, settings.supervisor_model)
+
+
+def _fallback_llm_handoff(state: EngineState) -> AgentHandoffCommand:
+    settings = MODEL_FACTORY.settings
+    return _invoke_structured_handoff(state, settings.fallback_model)
+
+
 def supervisor_node(state: EngineState) -> Command:
     """Route the graph by producing a structured handoff command."""
 
     routing_errors: list[str] = []
-    try:
-        handoff = _llm_handoff(state) if os.getenv("OPENAI_API_KEY") else _fallback_handoff(state)
-    except Exception as exc:
-        routing_errors.append(f"{type(exc).__name__}: {exc}")
+    settings = MODEL_FACTORY.settings
+    if settings.has_openai_credentials and settings.enable_llm_routing:
+        try:
+            handoff = _llm_handoff(state)
+        except Exception as exc:
+            routing_errors.append(
+                f"supervisor_model={settings.supervisor_model} failed: {type(exc).__name__}: {exc}"
+            )
+            try:
+                handoff = _fallback_llm_handoff(state)
+            except Exception as fallback_exc:
+                routing_errors.append(
+                    "fallback_model="
+                    f"{settings.fallback_model} failed: "
+                    f"{type(fallback_exc).__name__}: {fallback_exc}"
+                )
+                handoff = _fallback_handoff(state)
+    else:
         handoff = _fallback_handoff(state)
 
     handoff = _enforce_phase_guard(state, handoff)
@@ -144,13 +192,10 @@ def supervisor_node(state: EngineState) -> Command:
 
 
 def topology_node(state: EngineState) -> Command:
-    """Mock topology worker."""
+    """Topology worker backed by mock graph data."""
 
-    impact_summary = (
-        "Mock 拓扑影响面: user-center 受 api-gateway 与 web-console 调用；"
-        "下游依赖 auth-service、redis-session、mysql-user；"
-        "当前疑似传播链路为 user-center -> auth-service。"
-    )
+    impact = TOPOLOGY_TOOL.lookup(latest_user_request(state.get("messages", [])))
+    impact_summary = CONTEXT_STRATEGY.summarize_topology(impact)
     return Command(
         goto=SUPERVISOR,
         update={
@@ -159,7 +204,7 @@ def topology_node(state: EngineState) -> Command:
             "messages": [
                 AIMessage(
                     name=TOPOLOGY_NODE,
-                    content=f"[Mock] 正在查询图谱...\n{impact_summary}",
+                    content=f"[Tool] 正在查询拓扑图谱...\n{impact_summary}",
                 )
             ],
         },
@@ -167,13 +212,14 @@ def topology_node(state: EngineState) -> Command:
 
 
 def memory_node(state: EngineState) -> Command:
-    """Mock memory worker."""
+    """Memory worker backed by local BM25 over mock incidents."""
 
-    memory_summary = (
-        "Mock 历史记忆: INC-2026-0412 曾出现 auth-service 密钥轮换后 "
-        "Token Expired 激增；当时通过回滚签名密钥集合并刷新 JWKS 缓存恢复。"
-        "推荐检查 auth-service key rotation、JWKS cache TTL、gateway clock skew。"
+    query = CONTEXT_STRATEGY.build_memory_query(
+        latest_user_request(state.get("messages", [])),
+        state.get("impact_summary", ""),
     )
+    hits = MEMORY_TOOL.search(query, top_k=3)
+    memory_summary = CONTEXT_STRATEGY.summarize_memory(hits)
     return Command(
         goto=SUPERVISOR,
         update={
@@ -182,39 +228,58 @@ def memory_node(state: EngineState) -> Command:
             "messages": [
                 AIMessage(
                     name=MEMORY_NODE,
-                    content=f"[Mock] 正在查询记忆...\n{memory_summary}",
+                    content=f"[Tool] 正在检索历史记忆...\n{memory_summary}",
                 )
             ],
         },
     )
 
 
-def finish_node(state: EngineState) -> dict[str, Any]:
-    """Generate a deterministic Sprint 1 report from mocked context."""
+def execute_fix_node(state: EngineState) -> Command:
+    """Simulated fix execution node, guarded by LangGraph interrupt in HITL mode."""
 
-    report = "\n".join(
-        [
-            "诊断报告 V1.0",
-            f"- 用户请求: {_latest_user_request(state)}",
-            f"- 拓扑影响面: {state.get('impact_summary', 'unknown')}",
-            f"- 历史记忆: {state.get('memory_summary', 'none')}",
-            "- 初步判断: Token Expired 可能与 auth-service 密钥轮换、JWKS 缓存或网关时钟偏移有关。",
-            "- 建议动作: 检查 auth-service 当前签名密钥版本，刷新 user-center/JWKS 缓存，校验 api-gateway 与 auth-service 的 NTP 偏移。",
-        ]
+    plan = (
+        "模拟修复计划: 1) 刷新 user-center 与 api-gateway 的 JWKS 缓存；"
+        "2) 校验 auth-service 当前签名 key id；3) 检查 gateway 与 auth-service NTP 偏移；"
+        "4) 若 key id 不一致，回滚到上一签名密钥集合。"
     )
+    result = (
+        "模拟执行结果: 已刷新 JWKS 缓存，NTP 偏移在阈值内，发现 auth-service key id "
+        "与 user-center 缓存不一致；建议执行密钥集合回滚并观察 401/Token Expired 指标。"
+    )
+    return Command(
+        goto=FINISH,
+        update={
+            "current_phase": "fix_execution",
+            "fix_plan": plan,
+            "fix_execution_result": result,
+            "messages": [AIMessage(name=EXECUTE_FIX_NODE, content=f"[Execute] {result}")],
+        },
+    )
+
+
+def finish_node(state: EngineState) -> dict[str, Any]:
+    """Generate a report through the configured report strategy."""
+
+    report_model, report_errors = REPORT_GENERATOR.generate_with_errors(state)
+    report = render_report(report_model)
     return {
         "current_phase": "finished",
         "final_report": report,
         "messages": [AIMessage(content=report, name=FINISH)],
+        "report_errors": report_errors,
     }
 
 
-def build_graph():
+def build_graph(*, interrupt_before_fix: bool = False):
     graph = StateGraph(EngineState)
     graph.add_node(SUPERVISOR, supervisor_node)
     graph.add_node(TOPOLOGY_NODE, topology_node)
     graph.add_node(MEMORY_NODE, memory_node)
+    graph.add_node(EXECUTE_FIX_NODE, execute_fix_node)
     graph.add_node(FINISH, finish_node)
     graph.set_entry_point(SUPERVISOR)
     graph.add_edge(FINISH, END)
-    return graph.compile()
+    interrupt_before = [EXECUTE_FIX_NODE] if interrupt_before_fix else None
+    checkpointer = MemorySaver() if interrupt_before_fix else None
+    return graph.compile(checkpointer=checkpointer, interrupt_before=interrupt_before)
