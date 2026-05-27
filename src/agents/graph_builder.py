@@ -15,6 +15,7 @@ from core.messages import latest_user_request
 from core.model_factory import ModelFactory
 from core.paths import MOCK_DATA_DIR
 from core.state import EngineState
+from prompts.loader import PROMPTS
 from reporting.generator import LLMReportGenerator, render_report
 from tools.json_store import JsonStore
 from tools.memory import build_memory_provider
@@ -106,23 +107,19 @@ def _invoke_structured_handoff(state: EngineState, model_name: str) -> AgentHand
         method="json_mode",
     )
     user_request = latest_user_request(state.get("messages", []))
+    prompt = PROMPTS.pair(
+        "supervisor_system_v1.md",
+        "supervisor_user_v1.md",
+        user_request=user_request,
+        impact_summary=state.get("impact_summary", ""),
+        memory_summary=state.get("memory_summary", ""),
+        enable_fix_execution=str(state.get("enable_fix_execution", False)),
+        fix_execution_result=state.get("fix_execution_result", ""),
+    )
     response = llm.invoke(
         [
-            (
-                "system",
-                "你是微服务故障诊断控制面的 Supervisor。"
-                "你必须只输出 JSON，不要输出 Markdown。"
-                "JSON 字段必须是 reasoning、next_worker、instruction。"
-                "next_worker 只能在 Topology_Node、Memory_Node、Execute_Fix_Node、FINISH 中选择。"
-                "如果 impact_summary 和 memory_summary 都已经存在，应选择 FINISH。",
-            ),
-            (
-                "human",
-                "用户请求: "
-                f"{user_request}\n"
-                f"impact_summary: {state.get('impact_summary', '')}\n"
-                f"memory_summary: {state.get('memory_summary', '')}",
-            ),
+            ("system", prompt.system),
+            ("human", prompt.user),
         ]
     )
     if not isinstance(response, AgentHandoffCommand):

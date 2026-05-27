@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from agents.graph_builder import build_graph  # noqa: E402
 from core.config import load_model_settings  # noqa: E402
 from core.contracts import AgentHandoffCommand  # noqa: E402
+from prompts.loader import PROMPTS  # noqa: E402
 
 
 def _initial_state() -> dict:
@@ -111,6 +112,32 @@ class ControlPlaneTest(unittest.TestCase):
         self.assertTrue(settings.enable_llm_routing)
         self.assertTrue(settings.enable_llm_report)
         self.assertTrue(settings.has_openai_credentials)
+
+    def test_prompt_registry_renders_templates(self) -> None:
+        supervisor_prompt = PROMPTS.pair(
+            "supervisor_system_v1.md",
+            "supervisor_user_v1.md",
+            user_request="排查用户中心 Token Expired 报错",
+            impact_summary="",
+            memory_summary="",
+            enable_fix_execution="False",
+            fix_execution_result="",
+        )
+        report_prompt = PROMPTS.pair(
+            "report_system_v1.md",
+            "report_user_v1.md",
+            user_request="排查用户中心 Token Expired 报错",
+            impact_summary="服务 user-center",
+            memory_summary="INC-2026-0001",
+            fix_plan="",
+            fix_execution_result="",
+            operator_feedback="",
+        )
+
+        self.assertIn("next_worker", supervisor_prompt.system)
+        self.assertIn("排查用户中心", supervisor_prompt.user)
+        self.assertIn("likely_root_cause", report_prompt.system + report_prompt.user)
+        self.assertIn("服务 user-center", report_prompt.user)
 
 
 if __name__ == "__main__":

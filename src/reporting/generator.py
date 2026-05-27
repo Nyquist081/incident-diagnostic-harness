@@ -8,6 +8,7 @@ from core.contracts import DiagnosticReport
 from core.messages import latest_user_request
 from core.model_factory import ModelFactory
 from core.state import EngineState
+from prompts.loader import PROMPTS
 
 
 class ReportGenerator(Protocol):
@@ -63,35 +64,20 @@ class LLMReportGenerator:
                 DiagnosticReport,
                 method="json_mode",
             )
+            prompt = PROMPTS.pair(
+                "report_system_v1.md",
+                "report_user_v1.md",
+                user_request=latest_user_request(state.get("messages", [])),
+                impact_summary=state.get("impact_summary", ""),
+                memory_summary=state.get("memory_summary", ""),
+                fix_plan=state.get("fix_plan", ""),
+                fix_execution_result=state.get("fix_execution_result", ""),
+                operator_feedback=state.get("operator_feedback", ""),
+            )
             response = llm.invoke(
                 [
-                    (
-                        "system",
-                        "你是资深微服务故障复盘专家。"
-                        "必须只输出 JSON，不要输出 Markdown。"
-                        "JSON 顶层只能包含以下字段: "
-                        "title, impact, likely_root_cause, evidence, recommended_actions, confidence。"
-                        "title、impact、likely_root_cause 必须是字符串。"
-                        "evidence 和 recommended_actions 必须是字符串数组。"
-                        "confidence 只能是 low、medium、high。"
-                        "不要输出 diagnosis、topology、recommendations、similar_incidents、timeline 等额外字段。",
-                    ),
-                    (
-                        "human",
-                        "\n".join(
-                            [
-                                "请严格按此示例结构输出:",
-                                '{"title":"...","impact":"...","likely_root_cause":"...",'
-                                '"evidence":["..."],"recommended_actions":["..."],"confidence":"medium"}',
-                                f"用户请求: {latest_user_request(state.get('messages', []))}",
-                                f"拓扑影响面: {state.get('impact_summary', '')}",
-                                f"历史记忆: {state.get('memory_summary', '')}",
-                                f"修复计划: {state.get('fix_plan', '')}",
-                                f"执行结果: {state.get('fix_execution_result', '')}",
-                                f"人工反馈: {state.get('operator_feedback', '')}",
-                            ]
-                        ),
-                    ),
+                    ("system", prompt.system),
+                    ("human", prompt.user),
                 ]
             )
             if isinstance(response, DiagnosticReport):

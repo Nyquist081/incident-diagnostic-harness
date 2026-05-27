@@ -26,6 +26,9 @@ The default free local embedding recommendation is `BAAI/bge-small-zh-v1.5`.
 Vector retrieval is optional; the harness keeps `INCIDENT_MEMORY_PROVIDER=bm25`
 by default so it runs without downloading local embedding dependencies.
 
+Prompts are versioned Markdown files under `prompts/`. Supervisor routing uses
+`supervisor_*_v1.md`; structured report generation uses `report_*_v1.md`.
+
 ```bash
 uv run python main.py "排查用户中心 Token Expired 报错"
 ```

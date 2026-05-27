@@ -19,6 +19,7 @@
 | 上下文策略 | `src/context/` | 将原始工具结果压缩为状态摘要 | Prompt 压缩、证据排序、窗口裁剪 |
 | 工具层 | `src/tools/` | JSON 读取、拓扑查询、记忆检索、文本匹配 | Neo4j、CMDB、Zep、向量库 |
 | 数据平面 | `data/mock/` | 本地 Mock 拓扑和 50 条历史工单 | 真实数据库或工单系统 |
+| Prompt 层 | `prompts/` + `src/prompts/` | 版本化 Markdown Prompt 与加载器 | Prompt A/B、领域化 Prompt、严格 JSON Prompt |
 | 交互层 | `src/cli/` | Rich CLI、流式状态展示、人工确认 | API、批处理、服务化 |
 | 评测层 | `scripts/` | Benchmark、耗时和 Token 估算 | 真实 Token 统计、质量打分 |
 
@@ -60,6 +61,21 @@ INCIDENT_SUPERVISOR_MODEL
 - 主模型、降级模型、RAG 模型可以独立调优；
 - 可以接 OpenAI-compatible 网关；
 - `.env.example` 可提交，真实密钥不会进入 Git。
+
+## 3. 状态契约
+
+## 2.2 Prompt 层
+
+Prompt 不再写在节点逻辑里，而是放在 `prompts/` 目录：
+
+| 文件 | 用途 |
+| --- | --- |
+| `prompts/supervisor_system_v1.md` | Supervisor 结构化路由 system prompt。 |
+| `prompts/supervisor_user_v1.md` | Supervisor 路由 user prompt 模板。 |
+| `prompts/report_system_v1.md` | 结构化诊断报告 system prompt。 |
+| `prompts/report_user_v1.md` | 结构化诊断报告 user prompt 模板。 |
+
+加载器位于 `src/prompts/loader.py`，负责读取 Markdown 模板并注入变量。这样后续调 Prompt、做 A/B、做不同行业版本，不需要改 LangGraph 节点代码。
 
 ## 3. 状态契约
 
