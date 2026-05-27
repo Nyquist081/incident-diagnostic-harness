@@ -9,7 +9,7 @@ uv run python main.py "订单 checkout 支付超时"
 ## Expected Route
 
 ```text
-Supervisor -> Topology_Node -> Supervisor -> Memory_Node -> Supervisor -> FINISH
+Supervisor -> Topology_Node -> Supervisor -> Log_Node -> Supervisor -> Metrics_Node -> Supervisor -> Memory_Node -> Supervisor -> FINISH
 ```
 
 ## Evidence Sources
@@ -19,6 +19,10 @@ Supervisor -> Topology_Node -> Supervisor -> Memory_Node -> Supervisor -> FINISH
   - downstream: `payment-service`, `inventory-service`
 - `data/mock/incidents.json`
   - payment timeout, connection pool exhaustion, callback issues, DNS cache, risk-service latency
+- `data/mock/logs.json`
+  - checkout timeout, payment connection pool saturation, risk latency
+- `data/mock/metrics.json`
+  - checkout timeout rate, payment p95 latency, payment pool utilization
 
 ## Expected Report Focus
 

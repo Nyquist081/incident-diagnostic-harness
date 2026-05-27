@@ -18,11 +18,15 @@ from core.state import EngineState
 from prompts.loader import PROMPTS
 from reporting.generator import LLMReportGenerator, render_report
 from tools.json_store import JsonStore
+from tools.logs import MockLogProvider
 from tools.memory import build_memory_provider
+from tools.metrics import MockMetricsProvider
 from tools.topology import TopologyTool
 
 SUPERVISOR = "Supervisor"
 TOPOLOGY_NODE = "Topology_Node"
+LOG_NODE = "Log_Node"
+METRICS_NODE = "Metrics_Node"
 MEMORY_NODE = "Memory_Node"
 EXECUTE_FIX_NODE = "Execute_Fix_Node"
 FINISH = "FINISH"
@@ -31,6 +35,8 @@ FINISH = "FINISH"
 STORE = JsonStore(MOCK_DATA_DIR)
 CONTEXT_STRATEGY = DiagnosticContextStrategy()
 TOPOLOGY_TOOL = TopologyTool(STORE.load("topology.json"))
+LOG_TOOL = MockLogProvider(STORE.load("logs.json"))
+METRICS_TOOL = MockMetricsProvider(STORE.load("metrics.json"))
 MODEL_FACTORY = ModelFactory()
 MEMORY_TOOL = build_memory_provider(
     STORE.load("incidents.json"),
@@ -47,9 +53,21 @@ def _fallback_handoff(state: EngineState) -> AgentHandoffCommand:
             next_worker=TOPOLOGY_NODE,
             instruction="查询故障相关服务的依赖拓扑，识别可能传播路径。",
         )
+    if not state.get("log_summary"):
+        return AgentHandoffCommand(
+            reasoning="已有拓扑信息，下一步需要查询当前故障窗口的日志证据。",
+            next_worker=LOG_NODE,
+            instruction="检索相关服务近期错误日志，提取错误模式、trace id 和关键异常。",
+        )
+    if not state.get("metrics_summary"):
+        return AgentHandoffCommand(
+            reasoning="已有日志证据，下一步需要查询指标确认故障强度和异常维度。",
+            next_worker=METRICS_NODE,
+            instruction="检索相关服务指标，提取错误率、延迟、资源使用率和基线偏离。",
+        )
     if not state.get("memory_summary"):
         return AgentHandoffCommand(
-            reasoning="已有拓扑信息，下一步需要比对历史工单和相似故障。",
+            reasoning="已有当前观测证据，下一步需要比对历史工单和相似故障。",
             next_worker=MEMORY_NODE,
             instruction="检索历史工单摘要，提取相似告警、修复动作和根因线索。",
         )
@@ -78,7 +96,27 @@ def _enforce_phase_guard(state: EngineState, handoff: AgentHandoffCommand) -> Ag
             next_worker=TOPOLOGY_NODE,
             instruction="先获取受影响服务的依赖拓扑和传播路径。",
         )
-    if state.get("impact_summary") and not state.get("memory_summary"):
+    if state.get("impact_summary") and not state.get("log_summary"):
+        if handoff.next_worker != LOG_NODE:
+            return AgentHandoffCommand(
+                reasoning=(
+                    "Supervisor 输出已通过契约校验，但控制面仍缺少日志证据；"
+                    "按阶段守卫改派 Log_Node。"
+                ),
+                next_worker=LOG_NODE,
+                instruction="检索当前故障窗口日志，提取异常模式。",
+            )
+    if state.get("log_summary") and not state.get("metrics_summary"):
+        if handoff.next_worker != METRICS_NODE:
+            return AgentHandoffCommand(
+                reasoning=(
+                    "Supervisor 输出已通过契约校验，但控制面仍缺少指标证据；"
+                    "按阶段守卫改派 Metrics_Node。"
+                ),
+                next_worker=METRICS_NODE,
+                instruction="检索当前故障窗口指标，提取基线偏离。",
+            )
+    if state.get("metrics_summary") and not state.get("memory_summary"):
         if handoff.next_worker != MEMORY_NODE:
             return AgentHandoffCommand(
                 reasoning=(
@@ -112,6 +150,8 @@ def _invoke_structured_handoff(state: EngineState, model_name: str) -> AgentHand
         "supervisor_user_v1.md",
         user_request=user_request,
         impact_summary=state.get("impact_summary", ""),
+        log_summary=state.get("log_summary", ""),
+        metrics_summary=state.get("metrics_summary", ""),
         memory_summary=state.get("memory_summary", ""),
         enable_fix_execution=str(state.get("enable_fix_execution", False)),
         fix_execution_result=state.get("fix_execution_result", ""),
@@ -214,6 +254,8 @@ def memory_node(state: EngineState) -> Command:
     query = CONTEXT_STRATEGY.build_memory_query(
         latest_user_request(state.get("messages", [])),
         state.get("impact_summary", ""),
+        state.get("log_summary", ""),
+        state.get("metrics_summary", ""),
     )
     hits = MEMORY_TOOL.search(query, top_k=3)
     memory_summary = CONTEXT_STRATEGY.summarize_memory(hits)
@@ -226,6 +268,54 @@ def memory_node(state: EngineState) -> Command:
                 AIMessage(
                     name=MEMORY_NODE,
                     content=f"[Tool] 正在检索历史记忆...\n{memory_summary}",
+                )
+            ],
+        },
+    )
+
+
+def log_node(state: EngineState) -> Command:
+    """Log worker backed by the configured log search provider."""
+
+    query = CONTEXT_STRATEGY.build_observation_query(
+        latest_user_request(state.get("messages", [])),
+        state.get("impact_summary", ""),
+    )
+    hits = LOG_TOOL.search(query, top_k=3)
+    log_summary = CONTEXT_STRATEGY.summarize_logs(hits)
+    return Command(
+        goto=SUPERVISOR,
+        update={
+            "current_phase": "log_lookup",
+            "log_summary": log_summary,
+            "messages": [
+                AIMessage(
+                    name=LOG_NODE,
+                    content=f"[Tool] 正在检索故障日志...\n{log_summary}",
+                )
+            ],
+        },
+    )
+
+
+def metrics_node(state: EngineState) -> Command:
+    """Metrics worker backed by the configured metrics provider."""
+
+    query = CONTEXT_STRATEGY.build_observation_query(
+        latest_user_request(state.get("messages", [])),
+        state.get("impact_summary", ""),
+    )
+    points = METRICS_TOOL.search(query, top_k=3)
+    metrics_summary = CONTEXT_STRATEGY.summarize_metrics(points)
+    return Command(
+        goto=SUPERVISOR,
+        update={
+            "current_phase": "metrics_lookup",
+            "metrics_summary": metrics_summary,
+            "messages": [
+                AIMessage(
+                    name=METRICS_NODE,
+                    content=f"[Tool] 正在检索故障指标...\n{metrics_summary}",
                 )
             ],
         },
@@ -272,6 +362,8 @@ def build_graph(*, interrupt_before_fix: bool = False):
     graph = StateGraph(EngineState)
     graph.add_node(SUPERVISOR, supervisor_node)
     graph.add_node(TOPOLOGY_NODE, topology_node)
+    graph.add_node(LOG_NODE, log_node)
+    graph.add_node(METRICS_NODE, metrics_node)
     graph.add_node(MEMORY_NODE, memory_node)
     graph.add_node(EXECUTE_FIX_NODE, execute_fix_node)
     graph.add_node(FINISH, finish_node)

@@ -32,6 +32,8 @@ def _initial_state(query: str) -> dict:
         "messages": [HumanMessage(content=query)],
         "current_phase": "received",
         "impact_summary": "",
+        "log_summary": "",
+        "metrics_summary": "",
         "memory_summary": "",
         "fix_plan": "",
         "fix_execution_result": "",
@@ -72,6 +74,8 @@ def main() -> None:
                 [
                     query,
                     final_state.get("impact_summary", ""),
+                    final_state.get("log_summary", ""),
+                    final_state.get("metrics_summary", ""),
                     final_state.get("memory_summary", ""),
                     final_state.get("final_report", ""),
                 ]

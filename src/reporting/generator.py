@@ -32,6 +32,8 @@ class TemplateReportGenerator:
             likely_root_cause=likely_root_cause,
             evidence=[
                 f"用户请求: {user_request}",
+                f"日志证据: {state.get('log_summary') or '未检索到日志证据。'}",
+                f"指标证据: {state.get('metrics_summary') or '未检索到指标证据。'}",
                 f"历史记忆: {state.get('memory_summary') or '未检索到历史记忆。'}",
                 f"模拟执行结果: {fix_result}",
                 f"人工反馈: {state.get('operator_feedback') or '无'}",
@@ -66,6 +68,8 @@ class LLMReportGenerator:
                 "report_user_v1.md",
                 user_request=latest_user_request(state.get("messages", [])),
                 impact_summary=state.get("impact_summary", ""),
+                log_summary=state.get("log_summary", ""),
+                metrics_summary=state.get("metrics_summary", ""),
                 memory_summary=state.get("memory_summary", ""),
                 fix_plan=state.get("fix_plan", ""),
                 fix_execution_result=state.get("fix_execution_result", ""),

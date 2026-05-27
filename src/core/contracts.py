@@ -13,7 +13,14 @@ class AgentHandoffCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reasoning: str = Field(..., description="Decision rationale for the handoff.")
-    next_worker: Literal["Topology_Node", "Memory_Node", "Execute_Fix_Node", "FINISH"] = Field(
+    next_worker: Literal[
+        "Topology_Node",
+        "Log_Node",
+        "Metrics_Node",
+        "Memory_Node",
+        "Execute_Fix_Node",
+        "FINISH",
+    ] = Field(
         ...,
         description="The next worker node to execute, or FINISH to end diagnosis.",
     )

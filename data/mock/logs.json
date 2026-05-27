@@ -1,0 +1,12 @@
+[
+  {"service":"user-center","timestamp":"2026-05-27T01:05:12Z","level":"ERROR","message":"TokenExpiredError: JWT expired while validating request from api-gateway","trace_id":"trc-user-001"},
+  {"service":"user-center","timestamp":"2026-05-27T01:05:19Z","level":"WARN","message":"JWKS cache miss for kid auth-2026-05-new, using stale key set","trace_id":"trc-user-002"},
+  {"service":"auth-service","timestamp":"2026-05-27T01:04:58Z","level":"INFO","message":"Signing key rotation completed: active kid auth-2026-05-new","trace_id":"trc-auth-001"},
+  {"service":"api-gateway","timestamp":"2026-05-27T01:05:25Z","level":"ERROR","message":"Upstream user-center returned 401 Token Expired for /api/profile","trace_id":"trc-gw-001"},
+  {"service":"order-service","timestamp":"2026-05-27T01:08:01Z","level":"ERROR","message":"Checkout failed: payment-service request timed out after 3000ms","trace_id":"trc-order-001"},
+  {"service":"payment-service","timestamp":"2026-05-27T01:08:03Z","level":"WARN","message":"Connection pool saturation: active=120 idle=0 queue=87","trace_id":"trc-pay-001"},
+  {"service":"risk-service","timestamp":"2026-05-27T01:08:04Z","level":"WARN","message":"Risk verification p95 latency exceeded 1800ms","trace_id":"trc-risk-001"},
+  {"service":"redis-session","timestamp":"2026-05-27T01:11:44Z","level":"ERROR","message":"Session lookup timeout for key sess:user:**** after 250ms","trace_id":"trc-redis-001"},
+  {"service":"redis-session","timestamp":"2026-05-27T01:11:46Z","level":"WARN","message":"Eviction rate elevated, memory used 93 percent","trace_id":"trc-redis-002"},
+  {"service":"auth-service","timestamp":"2026-05-27T01:11:51Z","level":"ERROR","message":"Login failed because redis-session did not return session state","trace_id":"trc-auth-redis-001"}
+]

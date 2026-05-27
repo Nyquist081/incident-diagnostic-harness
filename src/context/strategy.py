@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from tools.memory import IncidentHit
+from tools.logs import LogHit
+from tools.metrics import MetricPoint
 from tools.topology import TopologyImpact
 
 
@@ -28,5 +30,37 @@ class DiagnosticContextStrategy:
             )
         return " | ".join(lines)
 
-    def build_memory_query(self, user_request: str, impact_summary: str) -> str:
+    def summarize_logs(self, hits: list[LogHit]) -> str:
+        if not hits:
+            return "未检索到相关日志。"
+        lines = []
+        for hit in hits:
+            lines.append(
+                f"{hit.timestamp} {hit.service} {hit.level} "
+                f"(score={hit.score:.2f}, trace={hit.trace_id}): {hit.message}"
+            )
+        return " | ".join(lines)
+
+    def summarize_metrics(self, points: list[MetricPoint]) -> str:
+        if not points:
+            return "未检索到相关指标。"
+        lines = []
+        for point in points:
+            lines.append(
+                f"{point.service}.{point.metric}={point.value:g}{point.unit} "
+                f"(baseline={point.baseline:g}{point.unit}, window={point.window}, "
+                f"score={point.score:.2f})"
+            )
+        return " | ".join(lines)
+
+    def build_observation_query(self, user_request: str, impact_summary: str) -> str:
+        return f"{user_request}\n{impact_summary}"
+
+    def build_memory_query(
+        self,
+        user_request: str,
+        impact_summary: str,
+        log_summary: str = "",
+        metrics_summary: str = "",
+    ) -> str:
         return f"{user_request}\n{impact_summary}"

@@ -31,6 +31,14 @@ flowchart TD
     C --> D["TopologyTool"]
     D --> E["data/mock/topology.json"]
     C --> B
+    B -->|"Command: Log_Node"| L["Log Worker"]
+    L --> M["LogSearchProvider"]
+    M --> N["data/mock/logs.json"]
+    L --> B
+    B -->|"Command: Metrics_Node"| O["Metrics Worker"]
+    O --> P["MetricsProvider"]
+    P --> Q["data/mock/metrics.json"]
+    O --> B
     B -->|"Command: Memory_Node"| F["Memory Worker"]
     F --> G["BM25 / FastEmbed Memory Provider"]
     G --> H["data/mock/incidents.json"]
@@ -48,10 +56,10 @@ Layering:
 | Graph control plane | `src/agents/` | Supervisor routing, worker nodes, LangGraph `Command` transitions |
 | Contracts and state | `src/core/` | `EngineState`, Pydantic contracts, model config |
 | Prompt registry | `prompts/`, `src/prompts/` | Versioned Markdown prompts for supervisor and report writer |
-| Tools | `src/tools/` | Topology lookup, memory retrieval, JSON store, BM25 |
+| Tools | `src/tools/` | Topology lookup, log search, metrics lookup, memory retrieval, JSON store, BM25 |
 | Context strategy | `src/context/` | Convert raw tool results into compact state summaries |
 | Reporting | `src/reporting/` | Template and LLM report generation |
-| Mock data | `data/mock/` | Service topology and 50 historical incidents |
+| Mock data | `data/mock/` | Service topology, logs, metrics, and 50 historical incidents |
 | Evaluation | `scripts/` | Benchmark runner |
 
 ## Quick Start

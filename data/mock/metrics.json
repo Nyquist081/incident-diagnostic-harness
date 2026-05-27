@@ -1,0 +1,13 @@
+[
+  {"service":"user-center","metric":"token_expired_count","window":"5m","value":1240,"baseline":85,"unit":"count"},
+  {"service":"user-center","metric":"http_401_rate","window":"5m","value":0.184,"baseline":0.012,"unit":"ratio"},
+  {"service":"auth-service","metric":"jwks_key_rotation_events","window":"30m","value":1,"baseline":0,"unit":"count"},
+  {"service":"api-gateway","metric":"upstream_401_rate_user_center","window":"5m","value":0.171,"baseline":0.01,"unit":"ratio"},
+  {"service":"order-service","metric":"checkout_timeout_rate","window":"5m","value":0.092,"baseline":0.006,"unit":"ratio"},
+  {"service":"payment-service","metric":"connection_pool_utilization","window":"5m","value":0.98,"baseline":0.62,"unit":"ratio"},
+  {"service":"payment-service","metric":"p95_latency_ms","window":"5m","value":2850,"baseline":420,"unit":"ms"},
+  {"service":"risk-service","metric":"p95_latency_ms","window":"5m","value":1810,"baseline":360,"unit":"ms"},
+  {"service":"redis-session","metric":"p99_latency_ms","window":"5m","value":246,"baseline":28,"unit":"ms"},
+  {"service":"redis-session","metric":"memory_used_ratio","window":"5m","value":0.93,"baseline":0.61,"unit":"ratio"},
+  {"service":"redis-session","metric":"evictions_per_second","window":"5m","value":88,"baseline":2,"unit":"count_per_sec"}
+]

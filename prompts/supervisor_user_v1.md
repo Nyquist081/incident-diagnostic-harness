@@ -12,6 +12,12 @@ user_request:
 impact_summary:
 {impact_summary}
 
+log_summary:
+{log_summary}
+
+metrics_summary:
+{metrics_summary}
+
 memory_summary:
 {memory_summary}
 

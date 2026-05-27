@@ -14,6 +14,8 @@ class EngineState(TypedDict):
     messages: Annotated[list[BaseMessage], operator.add]
     current_phase: str
     impact_summary: str
+    log_summary: str
+    metrics_summary: str
     memory_summary: str
     fix_plan: str
     fix_execution_result: str

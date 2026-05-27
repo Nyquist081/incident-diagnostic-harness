@@ -17,8 +17,8 @@
 | 控制面 | `src/agents/` | LangGraph 节点、Supervisor 路由、执行节点、中断点 | 替换 Supervisor 策略、增加新 Worker |
 | 状态与契约 | `src/core/` | `EngineState`、Pydantic 契约、消息和路径工具 | 增加状态字段、收紧契约 |
 | 上下文策略 | `src/context/` | 将原始工具结果压缩为状态摘要 | Prompt 压缩、证据排序、窗口裁剪 |
-| 工具层 | `src/tools/` | JSON 读取、拓扑查询、记忆检索、文本匹配 | Neo4j、CMDB、Zep、向量库 |
-| 数据平面 | `data/mock/` | 本地 Mock 拓扑和 50 条历史工单 | 真实数据库或工单系统 |
+| 工具层 | `src/tools/` | JSON 读取、拓扑查询、日志检索、指标查询、记忆检索、文本匹配 | Neo4j、CMDB、Loki、Prometheus、Zep、向量库 |
+| 数据平面 | `data/mock/` | 本地 Mock 拓扑、日志、指标和 50 条历史工单 | 真实数据库、日志平台、指标平台或工单系统 |
 | Prompt 层 | `prompts/` + `src/prompts/` | 版本化 Markdown Prompt 与加载器 | Prompt A/B、领域化 Prompt、严格 JSON Prompt |
 | 交互层 | `src/cli/` | Rich CLI、流式状态展示、人工确认 | API、批处理、服务化 |
 | 评测层 | `scripts/` | Benchmark、耗时和 Token 估算 | 真实 Token 统计、质量打分 |
@@ -85,6 +85,8 @@ Prompt 不再写在节点逻辑里，而是放在 `prompts/` 目录：
 | `current_phase` | `str` | 当前节点 | 当前执行阶段，供 CLI 和 Benchmark 展示。 |
 | `impact_summary` | `str` | `Topology_Node` | 拓扑影响面摘要，避免将图谱原始数据塞进消息流。 |
 | `memory_summary` | `str` | `Memory_Node` | 历史相似故障摘要，由检索结果压缩得到。 |
+| `log_summary` | `str` | `Log_Node` | 当前故障窗口的日志证据摘要。 |
+| `metrics_summary` | `str` | `Metrics_Node` | 当前故障窗口的指标证据摘要。 |
 | `fix_plan` | `str` | `Execute_Fix_Node` | 模拟修复计划。 |
 | `fix_execution_result` | `str` | `Execute_Fix_Node` | 模拟修复执行结果。 |
 | `enable_fix_execution` | `bool` | CLI/Benchmark | 是否启用人类在环修复执行路径。 |
@@ -114,6 +116,10 @@ flowchart TD
     A["CLI / Benchmark 输入"] --> B["Supervisor"]
     B -->|"Command: Topology_Node"| C["Topology_Node"]
     C -->|"Command: Supervisor"| B
+    B -->|"Command: Log_Node"| L["Log_Node"]
+    L -->|"Command: Supervisor"| B
+    B -->|"Command: Metrics_Node"| M["Metrics_Node"]
+    M -->|"Command: Supervisor"| B
     B -->|"Command: Memory_Node"| D["Memory_Node"]
     D -->|"Command: Supervisor"| B
     B -->|"Command: Execute_Fix_Node"| X["Execute_Fix_Node"]
@@ -160,6 +166,36 @@ flowchart TD
 
 ### 6.3 Memory Node
 
+### 6.3 Log Node
+
+职责：
+
+- 根据用户请求和拓扑影响面查询当前故障窗口日志；
+- 提取错误等级、异常信息、trace id 和相关服务；
+- 写入 `log_summary`；
+- 返回 Supervisor。
+
+替换方式：
+
+- 将 `MockLogProvider` 替换为 Loki、ELK、Datadog 或云日志检索；
+- 保持输出 `log_summary: str` 不变。
+
+### 6.4 Metrics Node
+
+职责：
+
+- 根据用户请求和拓扑影响面查询当前故障窗口指标；
+- 提取错误率、延迟、资源使用率和基线偏离；
+- 写入 `metrics_summary`；
+- 返回 Supervisor。
+
+替换方式：
+
+- 将 `MockMetricsProvider` 替换为 Prometheus、Datadog、CloudWatch 或云监控；
+- 保持输出 `metrics_summary: str` 不变。
+
+### 6.5 Memory Node
+
 职责：
 
 - 将用户请求和 `impact_summary` 合并成检索 query；
@@ -174,7 +210,7 @@ flowchart TD
 - 将 JSON 语料替换为 Zep、工单系统或日志平台；
 - 保持输出 `memory_summary: str` 不变。
 
-### 6.4 Execute Fix Node
+### 6.6 Execute Fix Node
 
 职责：
 
@@ -187,7 +223,7 @@ flowchart TD
 - `y`：恢复图执行，进入模拟修复节点；
 - `n`：记录 `operator_feedback`，关闭执行路径，直接收敛报告。
 
-### 6.5 Finish Node
+### 6.7 Finish Node
 
 职责：
 

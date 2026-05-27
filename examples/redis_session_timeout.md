@@ -9,7 +9,7 @@ uv run python main.py "redis session 查询超时导致登录失败"
 ## Expected Route
 
 ```text
-Supervisor -> Topology_Node -> Supervisor -> Memory_Node -> Supervisor -> FINISH
+Supervisor -> Topology_Node -> Supervisor -> Log_Node -> Supervisor -> Metrics_Node -> Supervisor -> Memory_Node -> Supervisor -> FINISH
 ```
 
 ## Evidence Sources
@@ -19,6 +19,10 @@ Supervisor -> Topology_Node -> Supervisor -> Memory_Node -> Supervisor -> FINISH
   - upstream: `user-center`, `auth-service`
 - `data/mock/incidents.json`
   - Redis memory pressure, failover, TTL mismatch, CPU saturation, cache prefix changes
+- `data/mock/logs.json`
+  - session lookup timeout, elevated eviction, auth login session failure
+- `data/mock/metrics.json`
+  - Redis p99 latency, memory used ratio, evictions per second
 
 ## Expected Report Focus
 

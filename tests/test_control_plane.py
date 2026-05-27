@@ -22,6 +22,8 @@ def _initial_state() -> dict:
         "messages": [HumanMessage(content="排查用户中心 Token Expired 报错")],
         "current_phase": "received",
         "impact_summary": "",
+        "log_summary": "",
+        "metrics_summary": "",
         "memory_summary": "",
         "fix_plan": "",
         "fix_execution_result": "",
@@ -46,7 +48,7 @@ class ControlPlaneTest(unittest.TestCase):
 
         self.assertEqual(
             [item["to"] for item in final_state["handoff_trace"]],
-            ["Topology_Node", "Memory_Node", "FINISH"],
+            ["Topology_Node", "Log_Node", "Metrics_Node", "Memory_Node", "FINISH"],
         )
 
     def test_contract_rejects_extra_fields(self) -> None:
@@ -69,6 +71,8 @@ class ControlPlaneTest(unittest.TestCase):
         final_state = build_graph().invoke(_initial_state())
 
         self.assertIn("服务 user-center", final_state["impact_summary"])
+        self.assertIn("TokenExpiredError", final_state["log_summary"])
+        self.assertIn("token_expired_count", final_state["metrics_summary"])
         self.assertIn("INC-2026", final_state["memory_summary"])
 
     def test_fix_execution_path_is_optional(self) -> None:
@@ -79,7 +83,7 @@ class ControlPlaneTest(unittest.TestCase):
 
         self.assertEqual(
             [item["to"] for item in final_state["handoff_trace"]],
-            ["Topology_Node", "Memory_Node", "Execute_Fix_Node"],
+            ["Topology_Node", "Log_Node", "Metrics_Node", "Memory_Node", "Execute_Fix_Node"],
         )
         self.assertTrue(final_state["fix_execution_result"])
 
@@ -119,6 +123,8 @@ class ControlPlaneTest(unittest.TestCase):
             "supervisor_user_v1.md",
             user_request="排查用户中心 Token Expired 报错",
             impact_summary="",
+            log_summary="",
+            metrics_summary="",
             memory_summary="",
             enable_fix_execution="False",
             fix_execution_result="",
@@ -128,6 +134,8 @@ class ControlPlaneTest(unittest.TestCase):
             "report_user_v1.md",
             user_request="排查用户中心 Token Expired 报错",
             impact_summary="服务 user-center",
+            log_summary="TokenExpiredError",
+            metrics_summary="token_expired_count",
             memory_summary="INC-2026-0001",
             fix_plan="",
             fix_execution_result="",

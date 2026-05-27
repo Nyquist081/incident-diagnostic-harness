@@ -22,6 +22,8 @@ def _initial_state(user_input: str) -> EngineState:
         "messages": [HumanMessage(content=user_input)],
         "current_phase": "received",
         "impact_summary": "",
+        "log_summary": "",
+        "metrics_summary": "",
         "memory_summary": "",
         "fix_plan": "",
         "fix_execution_result": "",

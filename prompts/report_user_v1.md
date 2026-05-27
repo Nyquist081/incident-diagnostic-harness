@@ -18,6 +18,16 @@ user_request:
 impact_summary:
 {impact_summary}
 
+## Evidence From Log Worker
+
+log_summary:
+{log_summary}
+
+## Evidence From Metrics Worker
+
+metrics_summary:
+{metrics_summary}
+
 ## Evidence From Memory Worker
 
 memory_summary:
