@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agents.graph_builder import build_graph  # noqa: E402
+from telemetry.recorder import RunRecorder  # noqa: E402
 
 CASES = [
     "排查用户中心 Token Expired 报错",
@@ -66,7 +67,14 @@ def main() -> None:
 
     for index, query in enumerate(CASES, start=1):
         started = time.perf_counter()
-        final_state = graph.invoke(_initial_state(query))
+        state = _initial_state(query)
+        recorder = RunRecorder(run_id=f"benchmark-{int(started * 1000)}-{index}", query=query)
+        recorder.record_event("received", state)
+        final_state = state
+        for step in graph.stream(state, stream_mode="values"):
+            final_state = step
+            recorder.record_event(step.get("current_phase", "unknown"), step)
+        recorder.finish(final_state)
         elapsed_ms = (time.perf_counter() - started) * 1000
         route = " -> ".join(item["to"] for item in final_state["handoff_trace"])
         token_estimate = _estimate_tokens(

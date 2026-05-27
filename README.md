@@ -157,6 +157,30 @@ The benchmark prints:
 - offline token estimate
 - fallback count
 
+## Run Telemetry
+
+Each CLI and benchmark execution is persisted to local SQLite:
+
+```text
+runs/incident_runs.sqlite3
+```
+
+The database stores:
+
+- run id
+- query
+- route path
+- per-phase event snapshots
+- total latency
+- final report
+- routing/report fallback errors
+
+List recent runs:
+
+```bash
+uv run python scripts/list_runs.py
+```
+
 ## Docker
 
 Build the CLI image:

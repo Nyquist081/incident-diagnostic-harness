@@ -13,6 +13,7 @@ from rich.panel import Panel
 from agents.graph_builder import build_graph
 from core.config import load_model_settings
 from core.state import EngineState
+from telemetry.recorder import RunRecorder
 
 console = Console()
 
@@ -93,11 +94,15 @@ def main() -> None:
     state["enable_fix_execution"] = args.human_in_loop
     final_state = state
     printed_messages = 1
-    config = {"configurable": {"thread_id": str(uuid4())}} if args.human_in_loop else None
+    run_id = str(uuid4())
+    recorder = RunRecorder(run_id=run_id, query=user_input)
+    recorder.record_event("received", state)
+    config = {"configurable": {"thread_id": run_id}} if args.human_in_loop else None
 
     for step in app.stream(state, config=config, stream_mode="values"):
         final_state = step
         phase = step.get("current_phase", "unknown")
+        recorder.record_event(phase, final_state)
         console.print(Panel.fit(f"当前阶段: {phase}", title="Route Step", border_style="blue"))
         messages = step.get("messages", [])
         for message in messages[printed_messages:]:
@@ -120,6 +125,7 @@ def main() -> None:
             for step in app.stream(Command(resume=True), config=config, stream_mode="values"):
                 final_state = step
                 phase = step.get("current_phase", "unknown")
+                recorder.record_event(phase, final_state)
                 console.print(Panel.fit(f"当前阶段: {phase}", title="Route Step", border_style="blue"))
         else:
             feedback = console.input("[bold]拒绝原因或调整建议:[/bold] ").strip()
@@ -129,6 +135,7 @@ def main() -> None:
                 "operator_feedback": feedback or "Operator rejected simulated fix execution.",
             }
             final_state = build_graph().invoke(continuation_state)
+            recorder.record_event(final_state.get("current_phase", "unknown"), final_state)
 
     if final_state.get("routing_errors"):
         console.print(
@@ -154,6 +161,8 @@ def main() -> None:
             border_style="green",
         )
     )
+    recorder.finish(final_state)
+    console.print(f"[dim]run_id: {run_id}[/dim]")
 
 
 def _is_waiting_for_fix(state: EngineState) -> bool:

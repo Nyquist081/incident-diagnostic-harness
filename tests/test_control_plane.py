@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from agents.graph_builder import build_graph  # noqa: E402
 from core.config import load_model_settings  # noqa: E402
 from core.contracts import AgentHandoffCommand  # noqa: E402
 from prompts.loader import PROMPTS  # noqa: E402
+from telemetry.recorder import RunRecorder, summarize_latest_runs  # noqa: E402
 
 
 def _initial_state() -> dict:
@@ -146,6 +148,29 @@ class ControlPlaneTest(unittest.TestCase):
         self.assertIn("排查用户中心", supervisor_prompt.user)
         self.assertIn("likely_root_cause", report_prompt.system + report_prompt.user)
         self.assertIn("服务 user-center", report_prompt.user)
+
+    def test_run_recorder_persists_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "runs.sqlite3"
+            state = _initial_state()
+            state["current_phase"] = "finished"
+            state["final_report"] = "done"
+            state["handoff_trace"] = [{"to": "FINISH"}]
+            recorder = RunRecorder(run_id="test-run", query="query", db_path=db_path)
+            recorder.record_event("received", state)
+            recorder.finish(state)
+
+            rows = summarize_latest_runs(db_path=db_path, limit=1)
+            with sqlite3.connect(db_path) as conn:
+                event_count = conn.execute(
+                    "SELECT COUNT(*) FROM run_events WHERE run_id = ?",
+                    ("test-run",),
+                ).fetchone()[0]
+
+        self.assertEqual(rows[0]["run_id"], "test-run")
+        self.assertEqual(rows[0]["status"], "finished")
+        self.assertEqual(rows[0]["route"], "FINISH")
+        self.assertEqual(event_count, 1)
 
 
 if __name__ == "__main__":
