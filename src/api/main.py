@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -52,8 +52,8 @@ def config() -> dict[str, object]:
 
 
 @app.post("/diagnose", response_model=DiagnoseResponse)
-def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
-    result = runner.run(
+async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
+    result = await runner.arun(
         request.query.strip(),
         enable_fix_execution=request.enable_fix_execution,
     )
@@ -61,16 +61,17 @@ def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
 
 
 @app.post("/diagnose/stream")
-def diagnose_stream(request: DiagnoseRequest) -> StreamingResponse:
-    def events() -> Iterator[str]:
-        for step in runner.stream(
+async def diagnose_stream(request: DiagnoseRequest) -> StreamingResponse:
+    async def events() -> AsyncIterator[str]:
+        async for step in runner.astream(
             request.query.strip(),
             enable_fix_execution=request.enable_fix_execution,
         ):
             event = state_to_stream_event(step.run_id, step.phase, step.state)
-            yield json.dumps(event.model_dump(mode="json"), ensure_ascii=False) + "\n"
+            payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+            yield f"event: diagnostic_step\ndata: {payload}\n\n"
 
-    return StreamingResponse(events(), media_type="application/x-ndjson")
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @app.get("/runs", response_model=RunsResponse)

@@ -203,7 +203,7 @@ curl -X POST http://127.0.0.1:8000/diagnose \
   -d '{"query":"排查用户中心 Token Expired 报错"}'
 ```
 
-Stream route events as NDJSON:
+Stream route events as Server-Sent Events:
 
 ```bash
 curl -N -X POST http://127.0.0.1:8000/diagnose/stream \

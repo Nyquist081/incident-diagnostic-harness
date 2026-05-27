@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -49,18 +50,23 @@ class ApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    def test_stream_endpoint_returns_ndjson_events(self) -> None:
+    def test_stream_endpoint_returns_sse_events(self) -> None:
         with self.client.stream(
             "POST",
             "/diagnose/stream",
             json={"query": "排查用户中心 Token Expired 报错"},
         ) as response:
-            lines = [line for line in response.iter_lines() if line]
+            body = response.read().decode()
 
         self.assertEqual(response.status_code, 200)
-        self.assertGreater(len(lines), 1)
-        self.assertIn('"phase": "received"', lines[0])
-        self.assertIn('"phase": "finished"', lines[-1])
+        self.assertEqual(response.headers["content-type"].split(";")[0], "text/event-stream")
+        chunks = [chunk for chunk in body.split("\n\n") if chunk.strip()]
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(chunks[0].startswith("event: diagnostic_step\n"))
+        first_payload = json.loads(chunks[0].split("data: ", 1)[1])
+        final_payload = json.loads(chunks[-1].split("data: ", 1)[1])
+        self.assertEqual(first_payload["phase"], "received")
+        self.assertEqual(final_payload["phase"], "finished")
 
     def test_runs_endpoint_lists_recent_runs(self) -> None:
         response = self.client.get("/runs?limit=5")
