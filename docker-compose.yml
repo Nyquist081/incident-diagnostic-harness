@@ -1,0 +1,11 @@
+services:
+  incident-harness:
+    build:
+      context: .
+    image: incident-diagnostic-harness:local
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data:ro
+      - ./prompts:/app/prompts:ro
+    command: ["排查用户中心 Token Expired 报错"]

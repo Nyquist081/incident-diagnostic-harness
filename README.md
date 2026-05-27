@@ -51,6 +51,38 @@ uv run python main.py --human-in-loop "排查用户中心 Token Expired 报错"
 uv run python scripts/run_benchmark.py
 ```
 
+## Docker
+
+Build the CLI image:
+
+```bash
+docker build -t incident-diagnostic-harness:local .
+```
+
+Run a diagnosis with local `.env` injected at runtime:
+
+```bash
+docker run --rm --env-file .env incident-diagnostic-harness:local "排查用户中心 Token Expired 报错"
+```
+
+Run through Docker Compose:
+
+```bash
+docker compose run --rm incident-harness "排查用户中心 Token Expired 报错"
+```
+
+Show model configuration in the container:
+
+```bash
+docker compose run --rm incident-harness --show-config "排查用户中心 Token Expired 报错"
+```
+
+Run the benchmark in the container:
+
+```bash
+docker compose run --rm --entrypoint uv incident-harness run python scripts/run_benchmark.py
+```
+
 ## Test
 
 ```bash
