@@ -62,8 +62,6 @@ INCIDENT_SUPERVISOR_MODEL
 - 可以接 OpenAI-compatible 网关；
 - `.env.example` 可提交，真实密钥不会进入 Git。
 
-## 3. 状态契约
-
 ## 2.2 Prompt 层
 
 Prompt 不再写在节点逻辑里，而是放在 `prompts/` 目录：

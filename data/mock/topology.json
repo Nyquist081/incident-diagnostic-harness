@@ -44,14 +44,14 @@
     },
     {
       "name": "order-service",
-      "aliases": ["订单服务", "order"],
+      "aliases": ["订单服务", "订单", "checkout", "order"],
       "upstream": ["api-gateway"],
       "downstream": ["payment-service", "inventory-service"],
       "owner": "commerce-team"
     },
     {
       "name": "payment-service",
-      "aliases": ["支付服务", "payment"],
+      "aliases": ["支付服务", "支付", "payment"],
       "upstream": ["order-service"],
       "downstream": ["risk-service"],
       "owner": "payment-team"
