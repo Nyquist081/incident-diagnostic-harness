@@ -5,36 +5,18 @@ from __future__ import annotations
 import argparse
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from langgraph.types import Command
 from rich.console import Console
 from rich.panel import Panel
 
 from agents.graph_builder import build_graph
 from core.config import load_model_settings
+from core.runner import initial_state
 from core.state import EngineState
 from telemetry.recorder import RunRecorder
 
 console = Console()
-
-
-def _initial_state(user_input: str) -> EngineState:
-    return {
-        "messages": [HumanMessage(content=user_input)],
-        "current_phase": "received",
-        "impact_summary": "",
-        "log_summary": "",
-        "metrics_summary": "",
-        "memory_summary": "",
-        "fix_plan": "",
-        "fix_execution_result": "",
-        "enable_fix_execution": False,
-        "operator_feedback": "",
-        "final_report": "",
-        "handoff_trace": [],
-        "routing_errors": [],
-        "report_errors": [],
-    }
 
 
 def main() -> None:
@@ -90,8 +72,7 @@ def main() -> None:
         )
 
     app = build_graph(interrupt_before_fix=args.human_in_loop)
-    state = _initial_state(user_input)
-    state["enable_fix_execution"] = args.human_in_loop
+    state = initial_state(user_input, enable_fix_execution=args.human_in_loop)
     final_state = state
     printed_messages = 1
     run_id = str(uuid4())

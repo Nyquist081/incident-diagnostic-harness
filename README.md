@@ -181,6 +181,42 @@ List recent runs:
 uv run python scripts/list_runs.py
 ```
 
+## FastAPI Service
+
+Start the HTTP service:
+
+```bash
+uv run uvicorn api.main:app --app-dir src --reload
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Run a diagnosis:
+
+```bash
+curl -X POST http://127.0.0.1:8000/diagnose \
+  -H "Content-Type: application/json" \
+  -d '{"query":"排查用户中心 Token Expired 报错"}'
+```
+
+Stream route events as NDJSON:
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/diagnose/stream \
+  -H "Content-Type: application/json" \
+  -d '{"query":"排查用户中心 Token Expired 报错"}'
+```
+
+List recent persisted runs:
+
+```bash
+curl http://127.0.0.1:8000/runs
+```
+
 ## Docker
 
 Build the CLI image:
@@ -192,25 +228,25 @@ docker build -t incident-diagnostic-harness:local .
 Run a diagnosis with local `.env` injected at runtime:
 
 ```bash
-docker run --rm --env-file .env incident-diagnostic-harness:local "排查用户中心 Token Expired 报错"
+docker run --rm --env-file .env incident-diagnostic-harness:local python main.py "排查用户中心 Token Expired 报错"
 ```
 
-Run through Docker Compose:
+Run the API service through Docker Compose:
 
 ```bash
-docker compose run --rm incident-harness "排查用户中心 Token Expired 报错"
+docker compose up --build
 ```
 
 Show model configuration in the container:
 
 ```bash
-docker compose run --rm incident-harness --show-config "排查用户中心 Token Expired 报错"
+docker compose run --rm incident-harness python main.py --show-config "排查用户中心 Token Expired 报错"
 ```
 
 Run the benchmark in the container:
 
 ```bash
-docker compose run --rm --entrypoint uv incident-harness run python scripts/run_benchmark.py
+docker compose run --rm incident-harness python scripts/run_benchmark.py
 ```
 
 ## Test

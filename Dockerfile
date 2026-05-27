@@ -17,4 +17,5 @@ COPY prompts ./prompts
 COPY scripts ./scripts
 COPY src ./src
 
-ENTRYPOINT ["uv", "run", "python", "main.py"]
+ENTRYPOINT ["uv", "run"]
+CMD ["python", "main.py"]
